@@ -16,6 +16,7 @@ config = RunnableConfig(configurable={"thread_id": "user-42"})
 
 result1 = research.invoke("Tell me about black holes.", config)
 result2 = research.invoke("How do they emit Hawking radiation?", config)
+print(result2["messages"][-1].content)
 
 # Streaming
 for chunk in research.stream("Explain quantum entanglement."):

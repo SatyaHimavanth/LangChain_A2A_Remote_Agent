@@ -19,9 +19,7 @@ from many async tasks concurrently.  Initialisation is protected by an
 
 Compatibility
 ~~~~~~~~~~~~~
-Targets ``a2a-sdk ~= 0.3.22`` which is pinned by ``google-adk[a2a]``.
-The ``a2a-sdk`` 1.x compatibility-mode API is also supported because the
-type names and client interface are stable across that boundary.
+Targets ``a2a-sdk >= 1.1.0`` and its protobuf-based client API.
 """
 
 from __future__ import annotations
@@ -53,7 +51,7 @@ class A2AClientManager:
     Args:
         agent_card_url:
             Full URL to the agent card JSON, e.g.
-            ``http://localhost:8001/.well-known/agent.json``.
+            ``http://localhost:8001/.well-known/agent-card.json``.
         headers:
             HTTP headers to attach to every request (auth tokens, API keys,
             custom tracing headers, …).
@@ -63,9 +61,9 @@ class A2AClientManager:
         use_client_preference:
             When ``True`` (default) the ``ClientFactory`` is allowed to
             negotiate the transport protocol from the server's capabilities.
-        supported_transports:
-            List of ``a2a.types.TransportProtocol`` values that the client
-            will advertise.  Defaults to both ``http_json`` and ``jsonrpc``.
+        supported_protocol_bindings:
+            List of A2A protocol binding names the client will advertise.
+            Defaults to ``["JSONRPC"]``.
         httpx_client:
             Provide a pre-configured :class:`httpx.AsyncClient` if you need
             custom TLS, auth middleware, or connection limits.  The manager
@@ -80,6 +78,7 @@ class A2AClientManager:
         timeout: float = 60.0,
         streaming: bool = True,
         use_client_preference: bool = True,
+        supported_protocol_bindings: Optional[list[str]] = None,
         supported_transports: Optional[list[Any]] = None,
         httpx_client: Optional[httpx.AsyncClient] = None,
     ) -> None:
@@ -88,7 +87,10 @@ class A2AClientManager:
         self._timeout = timeout
         self._streaming = streaming
         self._use_client_preference = use_client_preference
-        self._supported_transports_raw = supported_transports  # resolved lazily
+        self._supported_protocol_bindings = (
+            supported_protocol_bindings
+            or ([str(item) for item in supported_transports] if supported_transports else None)
+        )
         self._external_httpx_client = httpx_client
         self._owns_httpx_client = httpx_client is None
 
@@ -96,6 +98,7 @@ class A2AClientManager:
         self._httpx_client: Optional[httpx.AsyncClient] = httpx_client
         self._agent_card: Any = _UNSET  # a2a.types.AgentCard once resolved
         self._a2a_client: Any = _UNSET  # a2a.client.Client once created
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._init_lock: asyncio.Lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
@@ -125,14 +128,27 @@ class A2AClientManager:
             :class:`~remote_langchain_agent.exceptions.A2AAuthError`:
                 When the card endpoint returns 401 / 403.
         """
-        if self.is_initialised:
+        if self.is_initialised and self._loop is asyncio.get_running_loop():
             return
         async with self._init_lock:
             # Double-checked locking: another coroutine may have finished
             # while we were waiting for the lock.
-            if self.is_initialised:
+            if self.is_initialised and self._loop is asyncio.get_running_loop():
                 return
+            if self.is_initialised:
+                self._reset_owned_client_for_current_loop()
             await self._do_init()
+
+    def _reset_owned_client_for_current_loop(self) -> None:
+        if not self._owns_httpx_client:
+            raise A2AProtocolError(
+                "The provided httpx.AsyncClient is bound to a different event loop. "
+                "Use async methods on one loop or create a separate RemoteAgent per loop."
+            )
+        self._httpx_client = None
+        self._agent_card = _UNSET
+        self._a2a_client = _UNSET
+        self._loop = None
 
     async def _do_init(self) -> None:
         """Perform the actual initialisation (called exactly once)."""
@@ -140,10 +156,9 @@ class A2AClientManager:
             from a2a.client import ClientFactory
             from a2a.client.card_resolver import A2ACardResolver
             from a2a.client.client import ClientConfig
-            from a2a.types import TransportProtocol
         except ImportError as exc:
             raise ImportError(
-                "a2a-sdk is required.  Install with: pip install 'a2a-sdk~=0.3'"
+                "a2a-sdk is required. Install with: pip install 'a2a-sdk>=1.1.0'"
             ) from exc
 
         # Build (or reuse) the httpx client.
@@ -157,7 +172,7 @@ class A2AClientManager:
         parsed = urlparse(self._agent_card_url)
         base_url = f"{parsed.scheme}://{parsed.netloc}"
         # The card resolver expects the path relative to the base.
-        relative_path = parsed.path or "/.well-known/agent.json"
+        relative_path = parsed.path or "/.well-known/agent-card.json"
 
         logger.debug("Resolving agent card from %s", self._agent_card_url)
         try:
@@ -165,15 +180,12 @@ class A2AClientManager:
                 httpx_client=self._httpx_client,
                 base_url=base_url,
             )
-            # a2a-sdk 0.3.x exposes get_agent_card() both with and without the
-            # relative_card_path kwarg depending on the minor version.
             try:
                 card = await resolver.get_agent_card(
                     relative_card_path=relative_path
                 )
             except TypeError:
-                # Older patch version that takes no argument (uses the
-                # /.well-known/agent.json default).
+                # Older patch version that takes no argument.
                 card = await resolver.get_agent_card()
 
         except httpx.HTTPStatusError as exc:
@@ -195,18 +207,19 @@ class A2AClientManager:
         logger.debug("Agent card resolved: %s", getattr(card, "name", "unknown"))
 
         # Build the a2a client.
-        transports = self._supported_transports_raw
-        if transports is None:
-            transports = [TransportProtocol.http_json, TransportProtocol.jsonrpc]
+        protocol_bindings = self._supported_protocol_bindings
+        if protocol_bindings is None:
+            protocol_bindings = ["JSONRPC"]
 
         config = ClientConfig(
             httpx_client=self._httpx_client,
             streaming=self._streaming,
-            supported_transports=transports,
+            supported_protocol_bindings=protocol_bindings,
             use_client_preference=self._use_client_preference,
         )
         factory = ClientFactory(config=config)
         self._a2a_client = factory.create(card)
+        self._loop = asyncio.get_running_loop()
         logger.debug("A2A client created for %s", self._agent_card_url)
 
     async def close(self) -> None:
@@ -218,6 +231,7 @@ class A2AClientManager:
         if self._owns_httpx_client and self._httpx_client is not None:
             await self._httpx_client.aclose()
             self._httpx_client = None
+            self._loop = None
 
     # ------------------------------------------------------------------
     # Message sending
@@ -241,9 +255,7 @@ class A2AClientManager:
                 client (e.g. session tokens, tracing context).
 
         Yields:
-            Raw events from the A2A client:
-            ``tuple[Task, Optional[TaskStatusUpdateEvent | TaskArtifactUpdateEvent]]``
-            or a bare :class:`~a2a.types.Message`.
+            Raw :class:`~a2a.types.StreamResponse` events from the A2A client.
 
         Raises:
             :class:`~remote_langchain_agent.exceptions.A2ATimeoutError`:
@@ -255,9 +267,17 @@ class A2AClientManager:
         """
         await self.ensure_initialised()
 
-        send_kwargs: dict[str, Any] = {"request": message}
-        if request_metadata is not None:
-            send_kwargs["request_metadata"] = request_metadata
+        try:
+            from a2a.client import ClientCallContext
+        except ImportError as exc:
+            raise ImportError("a2a-sdk >= 1.1.0 is required.") from exc
+
+        context = ClientCallContext(
+            state=request_metadata or {},
+            timeout=self._timeout,
+        )
+
+        send_kwargs: dict[str, Any] = {"request": message, "context": context}
 
         try:
             async with asyncio.timeout(self._timeout):

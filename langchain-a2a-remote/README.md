@@ -27,7 +27,18 @@ result2 = research.invoke("How do they emit Hawking radiation?", config)
 # Streaming
 async for chunk in research.astream("Explain quantum entanglement."):
     if chunk.get("messages"):
-        print(chunk["messages"][-1].content, end="", flush=True)
+        msg = chunk["messages"][-1]
+        if reasoning := msg.additional_kwargs.get("reasoning_content"):
+            print(f"[reasoning] {reasoning}")
+        elif msg.content:
+            print(msg.content, end="", flush=True)
+
+# Set yield_final_state=True if you also want a final complete state dict
+# after the streamed chunks.
+
+# Non-streaming invoke returns only the final response content.
+result = research.invoke("What is 2+3*5?")
+print(result["messages"][-1].content)
 
 # Use inside a LangChain supervisor via create_agent
 from langchain.agents import create_agent

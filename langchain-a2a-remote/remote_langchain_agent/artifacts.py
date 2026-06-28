@@ -3,10 +3,6 @@ artifacts.py
 ~~~~~~~~~~~~
 Higher-level helpers for extracting structured content from A2A Task
 artifacts and event payloads.
-
-These are used by both the synchronous result path and the streaming path so
-that callers always get a consistent representation regardless of how the
-remote agent communicated its output.
 """
 
 from __future__ import annotations
@@ -22,20 +18,26 @@ if TYPE_CHECKING:
     )
 
 
+def _import_event_types():
+    """Return current A2A event types."""
+    try:
+        from a2a.types import (
+            TaskArtifactUpdateEvent,
+            TaskState,
+            TaskStatusUpdateEvent,
+        )
+        return TaskStatusUpdateEvent, TaskArtifactUpdateEvent, TaskState
+    except ImportError:
+        from a2a.compat.v0_3.types import (
+            TaskArtifactUpdateEvent,
+            TaskState,
+            TaskStatusUpdateEvent,
+        )
+        return TaskStatusUpdateEvent, TaskArtifactUpdateEvent, TaskState
+
+
 def extract_final_text(task: "A2ATask") -> str:
-    """Return the complete text output of a finished A2A task.
-
-    Precedence:
-    1. Text parts in ``task.artifacts`` (in artifact order).
-    2. Text parts in ``task.status.message`` (fallback for simple agents).
-    3. Empty string when neither is present.
-
-    Args:
-        task: A completed or failed :class:`~a2a.types.Task`.
-
-    Returns:
-        Concatenated text content, joined by newlines between artifacts.
-    """
+    """Return the complete text output of a finished A2A task."""
     from .adapters import _extract_text_from_parts
 
     sections: list[str] = []
@@ -57,22 +59,12 @@ def extract_final_text(task: "A2ATask") -> str:
 def extract_streaming_text(
     event: "TaskStatusUpdateEvent | TaskArtifactUpdateEvent",
 ) -> Optional[str]:
-    """Pull text from a streaming A2A update event.
-
-    Works for both :class:`~a2a.types.TaskStatusUpdateEvent` and
-    :class:`~a2a.types.TaskArtifactUpdateEvent`.
-
-    Args:
-        event: A streaming event yielded by the A2A client.
-
-    Returns:
-        Text string, or ``None`` when the event carries no text payload.
-    """
+    """Pull text from a streaming A2A update event."""
     from .adapters import artifact_update_to_text, status_update_to_text
 
     try:
-        from a2a.types import TaskArtifactUpdateEvent, TaskStatusUpdateEvent
-    except ImportError:  # pragma: no cover
+        TaskStatusUpdateEvent, TaskArtifactUpdateEvent, _ = _import_event_types()
+    except ImportError:
         return None
 
     if isinstance(event, TaskStatusUpdateEvent):
@@ -83,39 +75,24 @@ def extract_streaming_text(
 
 
 def is_terminal_state(task: "A2ATask") -> bool:
-    """Return ``True`` when the task has reached a terminal A2A state.
-
-    Terminal states are: ``completed``, ``failed``, ``canceled``.
-
-    Args:
-        task: The :class:`~a2a.types.Task` to inspect.
-    """
+    """Return True when the task has reached a terminal A2A state."""
     try:
-        from a2a.types import TaskState
-    except ImportError:  # pragma: no cover
+        _, _, TaskState = _import_event_types()
+    except ImportError:
         return False
 
     if not task.status:
         return False
     return task.status.state in (
-        TaskState.completed,
-        TaskState.failed,
-        TaskState.canceled,
+        TaskState.TASK_STATE_COMPLETED,
+        TaskState.TASK_STATE_FAILED,
+        TaskState.TASK_STATE_CANCELED,
+        TaskState.TASK_STATE_REJECTED,
     )
 
 
 def collect_all_artifacts(task: "A2ATask") -> list[dict[str, Any]]:
-    """Return all task artifacts as serialisable dicts.
-
-    Useful for callers that want to inspect non-text outputs (file references,
-    structured data, etc.) after a call completes.
-
-    Args:
-        task: A :class:`~a2a.types.Task` (may be in any state).
-
-    Returns:
-        List of artifact dicts; empty list when ``task.artifacts`` is ``None``.
-    """
+    """Return all task artifacts as serialisable dicts."""
     from .adapters import _artifact_to_dict
 
     if not task.artifacts:

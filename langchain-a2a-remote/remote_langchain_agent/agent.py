@@ -36,6 +36,8 @@ Streaming
 ~~~~~~~~~
 ``stream`` / ``astream`` yield :class:`~langchain_core.messages.AIMessageChunk`
 objects wrapped in ``{"messages": [chunk]}`` dicts (LangGraph convention).
+By default they mirror the A2A event stream and do not emit a duplicate final
+aggregate message after the final answer chunk.
 """
 
 from __future__ import annotations
@@ -58,6 +60,7 @@ from langchain_core.runnables import RunnableConfig, RunnableSerializable
 from pydantic import ConfigDict
 
 from .adapters import (
+    _extract_text_from_parts,
     a2a_message_to_ai_message,
     a2a_task_to_ai_message,
     lc_messages_to_a2a_message,
@@ -121,6 +124,9 @@ class RemoteAgent(RunnableSerializable[AgentInput, AgentOutput]):
         include_chunk_metadata: Propagate A2A event metadata into
             :class:`~langchain_core.messages.AIMessageChunk`
             ``additional_kwargs`` during streaming (default: ``True``).
+        yield_final_state: When ``True``, ``astream`` emits a final complete
+            ``{"messages": [...history, AIMessage]}`` state after live chunks.
+            Defaults to ``False`` to avoid duplicating the final A2A artifact.
         httpx_client: Optional pre-configured :class:`httpx.AsyncClient`.
             The :class:`RemoteAgent` will **not** close a client it did not
             create.
@@ -141,6 +147,7 @@ class RemoteAgent(RunnableSerializable[AgentInput, AgentOutput]):
     timeout: float = 60.0
     use_streaming: bool = True
     include_chunk_metadata: bool = True
+    yield_final_state: bool = False
 
     # ------------------------------------------------------------------
     # Private state (not serialised; re-created after deserialisation)
@@ -151,6 +158,8 @@ class RemoteAgent(RunnableSerializable[AgentInput, AgentOutput]):
     def model_post_init(self, __context: Any) -> None:
         """Initialise private mutable state after Pydantic construction."""
         # Mirror agent_name into name for LangSmith / tracing compatibility.
+        if self.agent_name == "remote_agent" and self.name:
+            object.__setattr__(self, "agent_name", self.name)
         if self.name is None:
             object.__setattr__(self, "name", self.agent_name)
         object.__setattr__(self, "_state_store", ConversationStateStore())
@@ -209,7 +218,7 @@ class RemoteAgent(RunnableSerializable[AgentInput, AgentOutput]):
             **kwargs: Forwarded to :meth:`ainvoke`.
 
         Returns:
-            ``{"messages": [*original_messages, AIMessage(...)]}``
+            ``{"messages": [*original_messages, *reasoning_messages, AIMessage(...)]}``
         """
         return _run_sync(self.ainvoke(input, config, **kwargs))
 
@@ -247,7 +256,6 @@ class RemoteAgent(RunnableSerializable[AgentInput, AgentOutput]):
         a2a_msg = lc_messages_to_a2a_message(
             messages,
             context_id=state.context_id,
-            task_id=state.task_id,
         )
 
         # Collect the full stream, then return.
@@ -263,7 +271,15 @@ class RemoteAgent(RunnableSerializable[AgentInput, AgentOutput]):
                 )
                 all_chunks.extend(chunks)
 
-                # Track the latest task so we can update state at the end.
+                if _is_stream_response(raw_event):
+                    payload_type = raw_event.WhichOneof("payload")
+                    if payload_type == "task":
+                        final_task = raw_event.task
+                    elif payload_type == "message":
+                        final_direct_msg = raw_event.message
+                    continue
+
+                # Backward-compatible handling for older tuple-shaped streams.
                 if isinstance(raw_event, tuple) and len(raw_event) == 2:
                     task, _ = raw_event
                     final_task = task
@@ -288,19 +304,18 @@ class RemoteAgent(RunnableSerializable[AgentInput, AgentOutput]):
             state.update_from_task(final_task)
 
         # Assemble the reply AIMessage.
-        if final_task is not None:
+        if final_task is not None and is_terminal_state(final_task):
             ai_message = a2a_task_to_ai_message(final_task)
         elif final_direct_msg is not None:
             ai_message = a2a_message_to_ai_message(final_direct_msg)
         else:
-            # Rebuild from accumulated chunks as last resort.
-            merged = chunks_to_final_message(all_chunks)
-            ai_message = AIMessage(
-                content=merged.content,
-                additional_kwargs=merged.additional_kwargs,
-            )
+            ai_message = _message_from_chunks(all_chunks)
 
-        return {**extra_state, "messages": [*messages, ai_message]}
+        reasoning_messages = _reasoning_messages_from_chunks(all_chunks)
+        if not reasoning_messages and final_task is not None:
+            reasoning_messages = _reasoning_messages_from_task(final_task)
+
+        return {**extra_state, "messages": [*messages, *reasoning_messages, ai_message]}
 
     def stream(
         self,
@@ -311,7 +326,8 @@ class RemoteAgent(RunnableSerializable[AgentInput, AgentOutput]):
         """Stream chunks from the remote agent synchronously.
 
         Yields dicts of the form ``{"messages": [AIMessageChunk(...)]}``.
-        The final dict contains a complete ``AIMessage`` once the task is done.
+        When ``yield_final_state=True``, the final dict contains a complete
+        ``AIMessage`` once the task is done.
 
         Internally collects the async stream via :meth:`astream` and replays
         it synchronously.  In async applications prefer :meth:`astream`.
@@ -322,8 +338,7 @@ class RemoteAgent(RunnableSerializable[AgentInput, AgentOutput]):
             **kwargs: Forwarded to :meth:`astream`.
 
         Yields:
-            ``{"messages": [AIMessageChunk(...)]}`` during streaming, then
-            ``{"messages": [...full_history, AIMessage(...)]}`` as last item.
+            ``{"messages": [AIMessageChunk(...)]}`` during streaming.
         """
 
         async def _collect() -> list[AgentOutput]:
@@ -341,10 +356,10 @@ class RemoteAgent(RunnableSerializable[AgentInput, AgentOutput]):
         """Stream chunks from the remote agent asynchronously.
 
         Each yielded value is a ``{"messages": [AIMessageChunk(...)]}`` dict
-        compatible with LangGraph's streaming conventions.  After the stream
-        ends, a final ``{"messages": [...full_history, AIMessage(...)]}`` dict
-        is yielded so that callers collecting state always receive a complete
-        view.
+        compatible with LangGraph's streaming conventions. If
+        ``yield_final_state=True``, a final
+        ``{"messages": [...full_history, AIMessage(...)]}`` dict is yielded
+        after live chunks.
 
         Args:
             input: See class docstring for accepted shapes.
@@ -352,7 +367,7 @@ class RemoteAgent(RunnableSerializable[AgentInput, AgentOutput]):
             **kwargs: Reserved for future use.
 
         Yields:
-            Streaming chunk dicts, then a final complete-state dict.
+            Streaming chunk dicts, plus an optional final complete-state dict.
         """
         messages, extra_state = normalise_input(input)
         thread_id = _thread_id_from_config(config)
@@ -368,7 +383,6 @@ class RemoteAgent(RunnableSerializable[AgentInput, AgentOutput]):
         a2a_msg = lc_messages_to_a2a_message(
             messages,
             context_id=state.context_id,
-            task_id=state.task_id,
         )
 
         all_chunks: list[AIMessageChunk] = []
@@ -382,16 +396,21 @@ class RemoteAgent(RunnableSerializable[AgentInput, AgentOutput]):
                     include_metadata=self.include_chunk_metadata,
                 )
 
-                # Track task state.
-                if isinstance(raw_event, tuple) and len(raw_event) == 2:
+                if _is_stream_response(raw_event):
+                    payload_type = raw_event.WhichOneof("payload")
+                    if payload_type == "task":
+                        final_task = raw_event.task
+                    elif payload_type == "message":
+                        final_direct_msg = raw_event.message
+                elif isinstance(raw_event, tuple) and len(raw_event) == 2:
                     task, _ = raw_event
                     final_task = task
                 else:
                     final_direct_msg = raw_event
 
-                # Yield non-empty chunks immediately to the caller.
+                # Yield answer chunks and reasoning-only progress chunks immediately.
                 for chunk in chunks:
-                    if chunk.content:
+                    if _should_yield_chunk(chunk):
                         all_chunks.append(chunk)
                         yield {**extra_state, "messages": [chunk]}
 
@@ -405,7 +424,10 @@ class RemoteAgent(RunnableSerializable[AgentInput, AgentOutput]):
         # Update state and emit the terminal complete-state dict.
         if final_task is not None:
             state.update_from_task(final_task)
-            ai_message = a2a_task_to_ai_message(final_task)
+            if is_terminal_state(final_task):
+                ai_message = a2a_task_to_ai_message(final_task)
+            else:
+                ai_message = _message_from_chunks(all_chunks)
         elif final_direct_msg is not None:
             try:
                 from a2a.types import Message as A2AMessage
@@ -413,25 +435,14 @@ class RemoteAgent(RunnableSerializable[AgentInput, AgentOutput]):
                 if isinstance(final_direct_msg, A2AMessage):
                     ai_message = a2a_message_to_ai_message(final_direct_msg)
                 else:
-                    merged = chunks_to_final_message(all_chunks)
-                    ai_message = AIMessage(
-                        content=merged.content,
-                        additional_kwargs=merged.additional_kwargs,
-                    )
+                    ai_message = _message_from_chunks(all_chunks)
             except ImportError:
-                merged = chunks_to_final_message(all_chunks)
-                ai_message = AIMessage(
-                    content=merged.content,
-                    additional_kwargs=merged.additional_kwargs,
-                )
+                ai_message = _message_from_chunks(all_chunks)
         else:
-            merged = chunks_to_final_message(all_chunks)
-            ai_message = AIMessage(
-                content=merged.content,
-                additional_kwargs=merged.additional_kwargs,
-            )
+            ai_message = _message_from_chunks(all_chunks)
 
-        yield {**extra_state, "messages": [*messages, ai_message]}
+        if self.yield_final_state:
+            yield {**extra_state, "messages": [*messages, ai_message]}
 
     def batch(
         self,
@@ -638,6 +649,76 @@ def _normalise_configs(
             )
         return config
     return [config] * n
+
+
+def _is_stream_response(raw_event: Any) -> bool:
+    return hasattr(raw_event, "WhichOneof") and raw_event.DESCRIPTOR.name == "StreamResponse"
+
+
+def _message_from_chunks(chunks: list[AIMessageChunk]) -> AIMessage:
+    artifact_chunks = [
+        chunk
+        for chunk in chunks
+        if chunk.content
+        and chunk.additional_kwargs.get("a2a_event_type") == "artifact_update"
+    ]
+    source_chunks = artifact_chunks or [chunk for chunk in chunks if chunk.content]
+    merged = chunks_to_final_message(source_chunks)
+    return AIMessage(
+        content=merged.content,
+        additional_kwargs=dict(merged.additional_kwargs),
+    )
+
+
+def _reasoning_messages_from_chunks(chunks: list[AIMessageChunk]) -> list[AIMessage]:
+    messages: list[AIMessage] = []
+    for chunk in chunks:
+        reasoning = chunk.additional_kwargs.get("reasoning_content")
+        if not isinstance(reasoning, str) or not reasoning:
+            continue
+        messages.append(
+            AIMessage(
+                content="",
+                additional_kwargs=dict(chunk.additional_kwargs),
+            )
+        )
+    return messages
+
+
+def _reasoning_messages_from_task(task: "A2ATask") -> list[AIMessage]:
+    messages: list[AIMessage] = []
+    try:
+        from a2a.types import Role
+    except ImportError:
+        return messages
+
+    for msg in task.history:
+        if msg.role != Role.Value("ROLE_AGENT"):
+            continue
+        reasoning = _extract_text_from_parts(msg.parts)
+        if not reasoning:
+            continue
+        messages.append(
+            AIMessage(
+                content="",
+                additional_kwargs={
+                    "a2a_event_type": "status_update",
+                    "a2a_message_id": msg.message_id or None,
+                    "a2a_task_id": msg.task_id or task.id or None,
+                    "a2a_context_id": msg.context_id or task.context_id or None,
+                    "reasoning_content": reasoning,
+                    "a2a_reasoning": reasoning,
+                },
+            )
+        )
+    return messages
+
+
+def _should_yield_chunk(chunk: AIMessageChunk) -> bool:
+    return bool(
+        chunk.content
+        or chunk.additional_kwargs.get("reasoning_content")
+    )
 
 
 def _run_sync(coro: Any) -> Any:

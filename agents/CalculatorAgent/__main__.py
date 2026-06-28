@@ -147,7 +147,7 @@ server_context_builder = CalculatorServerCallContextBuilder()
 # --- Routes ---
 routes = []
 routes.extend(create_agent_card_routes(public_agent_card))
-routes.extend(create_jsonrpc_routes(request_handler, "/", context_builder=server_context_builder))
+routes.extend(create_jsonrpc_routes(request_handler, "/", context_builder=server_context_builder, enable_v0_3_compat=True))
 
 app = Starlette(routes=routes)
 
