@@ -14,3 +14,4 @@ wheels/
 
 # Others
 uv.lock
+tasks.json

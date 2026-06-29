@@ -25,6 +25,12 @@ You can also use `CALCULATOR_AGENT_API_TOKENS` for calculator-specific tokens.
 uv run -m agents.CalculatorAgent --host 127.0.0.1 --port 9999
 ```
 
+## Auto test the agent
+
+```bash
+uv run python test_capabilities.py --start-agent --token local-dev-token --timeout 60
+```
+
 ## Test The Running Agent
 
 In another terminal:
