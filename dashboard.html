@@ -1,0 +1,983 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>A2A Test Dashboard</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: oklch(0.965 0.006 230);
+    --panel: oklch(0.99 0.004 230);
+    --panel-2: oklch(0.94 0.008 230);
+    --text: oklch(0.22 0.018 245);
+    --muted: oklch(0.49 0.02 245);
+    --faint: oklch(0.69 0.018 245);
+    --line: oklch(0.86 0.012 235);
+    --accent: oklch(0.55 0.18 255);
+    --accent-soft: oklch(0.93 0.04 255);
+    --ok: oklch(0.58 0.14 155);
+    --warn: oklch(0.68 0.13 75);
+    --bad: oklch(0.58 0.18 25);
+    --push: oklch(0.55 0.16 315);
+    --shadow: 0 12px 40px oklch(0.24 0.02 245 / 0.08);
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
+  }
+  [data-theme="dark"] {
+    color-scheme: dark;
+    --bg: oklch(0.18 0.014 245);
+    --panel: oklch(0.23 0.016 245);
+    --panel-2: oklch(0.28 0.018 245);
+    --text: oklch(0.91 0.012 235);
+    --muted: oklch(0.68 0.018 235);
+    --faint: oklch(0.5 0.016 235);
+    --line: oklch(0.35 0.018 245);
+    --accent: oklch(0.68 0.16 255);
+    --accent-soft: oklch(0.32 0.05 255);
+    --ok: oklch(0.72 0.13 155);
+    --warn: oklch(0.78 0.13 75);
+    --bad: oklch(0.68 0.17 25);
+    --push: oklch(0.72 0.15 315);
+    --shadow: 0 18px 50px oklch(0.05 0.01 245 / 0.28);
+  }
+  * { box-sizing: border-box; }
+  html, body { min-height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 14px;
+    line-height: 1.45;
+  }
+  button, input, textarea { font: inherit; }
+  button { cursor: pointer; }
+  button:disabled, input:disabled, textarea:disabled { cursor: not-allowed; opacity: .55; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .mono { font-family: var(--mono); }
+  .hidden { display: none !important; }
+
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 16px;
+    min-height: 58px;
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--bad); }
+  .dot.ok { background: var(--ok); }
+  .summary { min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .theme-toggle {
+    display: inline-flex;
+    gap: 4px;
+    padding: 4px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel-2);
+  }
+  .theme-toggle button {
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted);
+    padding: 6px 8px;
+    font-weight: 700;
+  }
+  .theme-toggle button.active { background: var(--panel); color: var(--text); box-shadow: var(--shadow); }
+
+  .connect-shell {
+    min-height: calc(100vh - 58px);
+    display: grid;
+    place-items: start center;
+    padding: 44px 18px;
+  }
+  .connect-card {
+    width: min(720px, 100%);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel);
+    box-shadow: var(--shadow);
+  }
+  .connect-card header { padding: 20px 22px 0; }
+  .connect-card h1 { margin: 0; font-size: 22px; line-height: 1.2; }
+  .connect-card p { margin: 8px 0 0; color: var(--muted); max-width: 68ch; }
+  .connect-form { display: grid; gap: 14px; padding: 22px; }
+
+  .field { display: grid; gap: 5px; }
+  .field label {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+  .input, textarea {
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel-2);
+    color: var(--text);
+    padding: 9px 10px;
+  }
+  textarea {
+    min-height: 64px;
+    max-height: 160px;
+    resize: vertical;
+  }
+  .help { color: var(--faint); font-size: 12px; }
+  .error-box {
+    border: 1px solid oklch(0.7 0.13 25 / .55);
+    border-radius: 8px;
+    background: oklch(0.92 0.035 25 / .45);
+    color: var(--bad);
+    padding: 10px 12px;
+    white-space: pre-wrap;
+  }
+
+  .btn {
+    min-height: 38px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: var(--accent);
+    color: oklch(0.99 0.004 230);
+    padding: 8px 12px;
+    font-weight: 800;
+  }
+  .btn.secondary { background: var(--panel); color: var(--text); border-color: var(--line); }
+  .btn.danger { background: var(--bad); }
+  .btn.small { min-height: 32px; padding: 6px 10px; }
+
+  .app-shell {
+    min-height: calc(100vh - 58px);
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+  .nav {
+    border-right: 1px solid var(--line);
+    background: var(--panel);
+    padding: 14px;
+  }
+  .nav button {
+    width: 100%;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted);
+    text-align: left;
+    padding: 10px 11px;
+    font-weight: 800;
+  }
+  .nav button:hover { background: var(--panel-2); color: var(--text); }
+  .nav button.active { background: var(--accent-soft); color: var(--text); }
+  .nav-meta { margin: 14px 2px 0; color: var(--muted); font-size: 12px; }
+  .content { min-width: 0; padding: 18px; }
+  .view { display: none; }
+  .view.active { display: grid; gap: 16px; }
+
+  .section {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel);
+    box-shadow: var(--shadow);
+  }
+  .section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 13px 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .section-head h2 { margin: 0; font-size: 15px; line-height: 1.2; }
+  .section-body { padding: 14px; }
+  .grid-2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, .72fr); gap: 16px; align-items: start; }
+
+  .cap-grid { display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr)); gap: 10px; }
+  .cap {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 9px 10px;
+    color: var(--muted);
+    background: var(--panel-2);
+  }
+  .cap strong { color: var(--text); }
+  .cap .pill { color: var(--bad); font-family: var(--mono); font-size: 12px; }
+  .cap.on .pill { color: var(--ok); }
+
+  .chat-panel {
+    height: min(68vh, 680px);
+    min-height: 440px;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+  .chat-log {
+    overflow-y: auto;
+    padding: 14px;
+    display: grid;
+    align-content: start;
+    gap: 10px;
+  }
+  .message {
+    max-width: min(760px, 92%);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 9px 11px;
+    background: var(--panel-2);
+  }
+  .message.user { justify-self: end; background: var(--accent-soft); }
+  .message.agent { justify-self: start; }
+  .message .meta { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 4px; color: var(--muted); font-size: 12px; }
+  .message .body { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .composer {
+    border-top: 1px solid var(--line);
+    padding: 12px;
+    display: grid;
+    gap: 9px;
+  }
+  .composer-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; }
+  .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .segmented { display: inline-flex; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
+  .segmented button { border: 0; border-radius: 6px; background: transparent; color: var(--muted); padding: 6px 9px; font-weight: 800; }
+  .segmented button.active { background: var(--panel); color: var(--text); }
+  .switch { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 13px; }
+  .file-row { display: flex; gap: 10px; align-items: center; min-width: 0; color: var(--muted); }
+  .file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .event-list { display: grid; max-height: 420px; overflow-y: auto; }
+  .event {
+    display: grid;
+    grid-template-columns: 70px 86px minmax(0, 1fr);
+    gap: 8px;
+    align-items: start;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--line);
+    font-size: 12px;
+  }
+  .event time { color: var(--faint); font-family: var(--mono); }
+  .event-text { overflow-wrap: anywhere; }
+  .badge {
+    border-radius: 999px;
+    padding: 2px 7px;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 800;
+    background: var(--panel-2);
+    color: var(--muted);
+  }
+  .badge.task { color: var(--accent); }
+  .badge.working { color: var(--warn); }
+  .badge.complete, .badge.artifact { color: var(--ok); }
+  .badge.error { color: var(--bad); }
+  .badge.push { color: var(--push); }
+
+  pre {
+    margin: 0;
+    max-height: 520px;
+    overflow: auto;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--panel-2);
+    padding: 12px;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+  .card-stack { display: grid; gap: 14px; }
+  .label-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 6px; color: var(--muted); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
+  .inline-status { color: var(--faint); font-family: var(--mono); font-size: 11px; font-weight: 500; text-transform: none; letter-spacing: 0; }
+  .inline-status.ok { color: var(--ok); }
+  .inline-status.bad { color: var(--bad); }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { border-bottom: 1px solid var(--line); padding: 8px 7px; text-align: left; vertical-align: top; }
+  th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+
+  @media (max-width: 980px) {
+    .topbar { grid-template-columns: 1fr auto; }
+    .summary { grid-column: 1 / 3; }
+    .app-shell { grid-template-columns: 1fr; }
+    .nav { display: flex; gap: 6px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+    .nav button { width: auto; white-space: nowrap; }
+    .nav-meta { display: none; }
+    .grid-2 { grid-template-columns: 1fr; }
+    .cap-grid { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+    .composer-row { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span id="statusDot" class="dot"></span><span>A2A Test Dashboard</span></div>
+  <div id="topSummary" class="summary">Connect to an A2A agent to begin.</div>
+  <div class="theme-toggle" aria-label="Theme">
+    <button id="lightBtn" type="button">Light</button>
+    <button id="darkBtn" type="button">Dark</button>
+  </div>
+</header>
+
+<main id="connectScreen" class="connect-shell">
+  <section class="connect-card">
+    <header>
+      <h1>Connect an A2A agent</h1>
+      <p>Enter the JSON-RPC URL for any A2A agent. If you provide a token, the dashboard verifies the authenticated extended card before enabling the test workspace.</p>
+    </header>
+    <div class="connect-form">
+      <div class="field">
+        <label for="agentUrl">A2A URL</label>
+        <input id="agentUrl" class="input mono" placeholder="http://host:port" spellcheck="false" autocomplete="off" />
+        <div class="help">No default URL is used. Paste the exact agent endpoint you want to test.</div>
+      </div>
+      <div class="field">
+        <label for="token">Auth token</label>
+        <input id="token" class="input mono" type="password" placeholder="Optional bearer token" spellcheck="false" autocomplete="off" />
+      </div>
+      <button id="connectBtn" class="btn" type="button">Connect</button>
+      <div id="connectError" class="error-box hidden"></div>
+    </div>
+  </section>
+</main>
+
+<main id="appScreen" class="app-shell hidden">
+  <nav class="nav" aria-label="Dashboard views">
+    <button class="nav-btn active" data-view="cardsView" type="button">Cards</button>
+    <button class="nav-btn" data-view="chatView" type="button">Chat</button>
+    <button class="nav-btn" data-view="tasksView" type="button">Tasks</button>
+    <button class="nav-btn" data-view="pushView" type="button">Push</button>
+    <button class="nav-btn" data-view="eventsView" type="button">Events</button>
+    <button id="disconnectBtn" type="button">Disconnect</button>
+    <div class="nav-meta">
+      <div id="agentName">Agent connected</div>
+      <div id="webhookText" class="mono"></div>
+    </div>
+  </nav>
+
+  <section class="content">
+    <div id="cardsView" class="view active">
+      <section class="section">
+        <div class="section-head"><h2>Capabilities</h2></div>
+        <div class="section-body">
+          <div class="cap-grid">
+            <div class="cap" data-cap="streaming"><strong>Streaming</strong><span class="pill">off</span></div>
+            <div class="cap" data-cap="push"><strong>Push</strong><span class="pill">off</span></div>
+            <div class="cap" data-cap="extended"><strong>Extended</strong><span class="pill">off</span></div>
+            <div class="cap" data-cap="multimodal"><strong>Files</strong><span class="pill">off</span></div>
+            <div class="cap on" data-cap="tasks"><strong>Tasks</strong><span class="pill">on</span></div>
+          </div>
+        </div>
+      </section>
+      <section class="section">
+        <div class="section-head">
+          <h2>A2A cards</h2>
+          <button id="refreshCardBtn" class="btn secondary small" type="button">Refresh</button>
+        </div>
+        <div class="section-body card-stack">
+          <div>
+            <div class="label-row">Public card <span id="publicCardStatus" class="inline-status">loaded</span></div>
+            <pre id="publicCardView"></pre>
+          </div>
+          <div>
+            <div class="label-row">Extended card <span id="extendedCardStatus" class="inline-status">not requested</span></div>
+            <pre id="extendedCardView"></pre>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div id="chatView" class="view">
+      <div class="grid-2">
+        <section class="section chat-panel">
+          <div id="chatLog" class="chat-log"></div>
+          <div class="composer">
+            <div class="toolbar">
+              <div class="segmented">
+                <button id="streamMode" class="active" type="button">Stream</button>
+                <button id="invokeMode" type="button">Invoke</button>
+              </div>
+              <label class="switch"><input id="autoPush" type="checkbox" /> Auto push</label>
+            </div>
+            <div class="composer-row">
+              <div class="field">
+                <label for="message">Message</label>
+                <textarea id="message" placeholder="Ask the connected agent a question."></textarea>
+              </div>
+              <button id="sendBtn" class="btn" type="button">Send</button>
+            </div>
+            <div class="file-row">
+              <input id="fileInput" type="file" disabled />
+              <span id="fileName" class="file-name">File upload disabled until multimodal input is advertised.</span>
+              <button id="clearFileBtn" class="btn secondary small" type="button" disabled>Clear file</button>
+            </div>
+          </div>
+        </section>
+        <section class="section">
+          <div class="section-head"><h2>Live protocol events</h2><button id="clearChatEventsBtn" class="btn secondary small" type="button">Clear</button></div>
+          <div class="section-body"><div id="chatEvents" class="event-list"></div></div>
+        </section>
+      </div>
+    </div>
+
+    <div id="tasksView" class="view">
+      <section class="section">
+        <div class="section-head">
+          <h2>Task management</h2>
+          <div class="toolbar">
+            <button id="getTaskBtn" class="btn secondary small" type="button">Get</button>
+            <button id="listTasksBtn" class="btn secondary small" type="button">List</button>
+            <button id="subscribeBtn" class="btn secondary small" type="button">Subscribe</button>
+            <button id="stopSubscribeBtn" class="btn secondary small" type="button" disabled>Stop</button>
+            <button id="cancelTaskBtn" class="btn danger small" type="button">Cancel</button>
+          </div>
+        </div>
+        <div class="section-body" style="display:grid; gap:12px">
+          <div class="grid-2" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr)">
+            <div class="field"><label for="taskId">Task ID</label><input id="taskId" class="input mono" placeholder="Filled after chat" /></div>
+            <div class="field"><label for="contextId">Context ID</label><input id="contextId" class="input mono" placeholder="Optional filter" /></div>
+          </div>
+          <div id="taskOutput"></div>
+        </div>
+      </section>
+    </div>
+
+    <div id="pushView" class="view">
+      <section class="section">
+        <div class="section-head">
+          <h2>Push feed</h2>
+          <button id="clearPushBtn" class="btn secondary small" type="button">Clear</button>
+        </div>
+        <div class="section-body" style="display:grid; gap:12px">
+          <div class="field"><label for="webhookUrl">Dashboard webhook</label><input id="webhookUrl" class="input mono" readonly /></div>
+          <div id="pushList" class="event-list"></div>
+        </div>
+      </section>
+    </div>
+
+    <div id="eventsView" class="view">
+      <section class="section">
+        <div class="section-head"><h2>All events</h2><button id="clearEventsBtn" class="btn secondary small" type="button">Clear</button></div>
+        <div class="section-body"><div id="eventList" class="event-list"></div></div>
+      </section>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+
+const state = {
+  theme: localStorage.getItem("a2a.theme") || "light",
+  connected: false,
+  agentUrl: "",
+  token: "",
+  card: null,
+  extendedCard: null,
+  stream: true,
+  attachedFile: null,
+  pushStream: null,
+  subscribeController: null
+};
+
+const $ = (selector) => document.querySelector(selector);
+const $$ = (selector) => Array.from(document.querySelectorAll(selector));
+document.documentElement.dataset.theme = state.theme;
+
+function setTheme(theme) {
+  state.theme = theme;
+  localStorage.setItem("a2a.theme", theme);
+  document.documentElement.dataset.theme = theme;
+  $("#lightBtn").classList.toggle("active", theme === "light");
+  $("#darkBtn").classList.toggle("active", theme === "dark");
+}
+setTheme(state.theme);
+
+function id() {
+  return crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random();
+}
+
+function now() {
+  return new Date().toTimeString().slice(0, 8);
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  })[ch]);
+}
+
+function pretty(value) {
+  return JSON.stringify(value, null, 2);
+}
+
+function showError(message) {
+  const box = $("#connectError");
+  box.textContent = message;
+  box.classList.remove("hidden");
+}
+
+function clearError() {
+  $("#connectError").classList.add("hidden");
+  $("#connectError").textContent = "";
+}
+
+function normalizeRpcError(response, fallback) {
+  const error = response && response.error;
+  if (!error) return fallback;
+  if (typeof error === "string") return error;
+  const code = error.code !== undefined ? `${error.code}: ` : "";
+  return code + (error.message || fallback);
+}
+
+function looksLikeExtendedCard(publicCard, candidateCard) {
+  if (!candidateCard) return false;
+  const publicSkills = (publicCard && publicCard.skills) || [];
+  const candidateSkills = candidateCard.skills || [];
+  if (candidateSkills.length > publicSkills.length) return true;
+  if ((candidateCard.securityRequirements || candidateCard.security_requirements || []).length) return true;
+  if (candidateCard.name && publicCard && candidateCard.name !== publicCard.name) return true;
+  if (candidateCard.version && publicCard && candidateCard.version !== publicCard.version) return true;
+  const publicIds = publicSkills.map((skill) => skill.id || skill.name).sort().join("|");
+  const candidateIds = candidateSkills.map((skill) => skill.id || skill.name).sort().join("|");
+  return candidateIds !== publicIds;
+}
+
+async function relayRpc(method, params, options) {
+  options = options || {};
+  if (!state.connected && method !== "GetExtendedAgentCard") {
+    throw new Error("Connect to an agent before using the workspace.");
+  }
+  const response = await fetch("/api/rpc", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      agentUrl: state.agentUrl,
+      token: state.token || null,
+      method,
+      params,
+      streaming: !!options.streaming
+    }),
+    signal: options.signal || null
+  });
+  if (options.streaming) {
+    await readSse(response, options.onEvent || (() => {}), options.signal || null);
+    return null;
+  }
+  return response.json();
+}
+
+async function readSse(response, onEvent, signal) {
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP ${response.status}`);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    if (signal && signal.aborted) {
+      await reader.cancel();
+      return;
+    }
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    buffer += decoder.decode(chunk.value, { stream: true });
+    let boundary;
+    while ((boundary = buffer.indexOf("\n\n")) >= 0) {
+      const raw = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      const data = raw.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n");
+      if (!data || data === "[DONE]") continue;
+      try { onEvent(JSON.parse(data)); } catch (_) {}
+    }
+  }
+}
+
+function textFromPart(part) {
+  if (!part) return "";
+  const source = part.root || part;
+  if (typeof source.text === "string") return source.text;
+  if (source.kind === "text" && typeof source.value === "string") return source.value;
+  if (source.data && typeof source.data.text === "string") return source.data.text;
+  return "";
+}
+
+function extractTextFromParts(parts) {
+  return (parts || []).map(textFromPart).filter(Boolean).join("\n");
+}
+
+function extractArtifactText(value) {
+  if (!value) return "";
+  const result = value.result || value;
+  const artifactUpdate = result.artifactUpdate || result.artifact_update;
+  if (artifactUpdate) {
+    return extractTextFromParts((artifactUpdate.artifact || artifactUpdate).parts);
+  }
+  if (result.artifact) {
+    return extractTextFromParts(result.artifact.parts);
+  }
+  const task = result.task || result;
+  const artifacts = task.artifacts || [];
+  const text = artifacts.flatMap((artifact) => artifact.parts || []).map((part) => part.text).filter(Boolean).join("\n");
+  if (text) return text;
+  const nestedText = artifacts.flatMap((artifact) => artifact.parts || []).map(textFromPart).filter(Boolean).join("\n");
+  if (nestedText) return nestedText;
+  if (result.message || task.message) return extractTextFromParts((result.message || task.message).parts);
+  const status = result.status || task.status || {};
+  if (status.message) return extractTextFromParts(status.message.parts);
+  return "";
+}
+
+function classify(ev) {
+  const result = ev.result || {};
+  if (ev.error) return { type: "error", text: ev.error.message || "Error" };
+  const task = result.task || result;
+  if (result.task || (task.id && task.status)) {
+    return { type: "task", text: "Task " + task.id, taskId: task.id, contextId: task.contextId || task.context_id, artifactText: extractArtifactText(ev) };
+  }
+  const statusUpdate = result.statusUpdate || result.status_update;
+  if (statusUpdate) {
+    const status = statusUpdate.status || {};
+    const stateName = status.state || "status";
+    const text = extractTextFromParts(((status.message || {}).parts) || []);
+    const type = stateName === "TASK_STATE_COMPLETED" ? "complete" : (stateName === "TASK_STATE_WORKING" ? "working" : "error");
+    return { type, text: stateName + (text ? ": " + text : "") };
+  }
+  const artifactText = extractArtifactText(ev);
+  if (artifactText) return { type: "artifact", text: artifactText, artifactText };
+  return { type: "task", text: "Event" };
+}
+
+function addEvent(target, type, text, raw) {
+  const row = document.createElement("div");
+  row.className = "event";
+  row.innerHTML = `<time>${now()}</time><span class="badge ${type}">${escapeHtml(type)}</span><span class="event-text">${escapeHtml(text)}</span>`;
+  row.title = raw ? pretty(raw) : "";
+  target.prepend(row);
+  while (target.children.length > 120) target.removeChild(target.lastChild);
+}
+
+function logEvent(type, text, raw) {
+  addEvent($("#eventList"), type, text, raw);
+  if ($("#chatView").classList.contains("active") || type !== "push") {
+    addEvent($("#chatEvents"), type, text, raw);
+  }
+}
+
+function addMessage(role, text) {
+  const item = document.createElement("div");
+  item.className = "message " + role;
+  item.innerHTML = `<div class="meta"><span>${role}</span><span>${now()}</span></div><div class="body">${escapeHtml(text)}</div>`;
+  $("#chatLog").appendChild(item);
+  $("#chatLog").scrollTop = $("#chatLog").scrollHeight;
+}
+
+function updateTask(taskId, contextId) {
+  if (taskId) $("#taskId").value = taskId;
+  if (contextId) $("#contextId").value = contextId;
+}
+
+function updateCaps(card) {
+  const caps = card.capabilities || {};
+  const inputModes = card.defaultInputModes || card.default_input_modes || [];
+  const hasFile = inputModes.some((mode) => mode.startsWith("image/") || mode === "application/json");
+  const values = {
+    streaming: !!caps.streaming,
+    push: !!caps.pushNotifications,
+    extended: !!caps.extendedAgentCard,
+    multimodal: hasFile,
+    tasks: true
+  };
+  $$(".cap").forEach((cap) => {
+    const on = !!values[cap.dataset.cap];
+    cap.classList.toggle("on", on);
+    cap.querySelector(".pill").textContent = on ? "on" : "off";
+  });
+  $("#fileInput").disabled = !hasFile;
+  $("#clearFileBtn").disabled = !hasFile;
+  $("#fileName").textContent = hasFile ? "No file selected." : "File upload disabled until multimodal input is advertised.";
+  $("#autoPush").disabled = !values.push;
+  $("#autoPush").checked = values.push;
+}
+
+function showApp() {
+  $("#connectScreen").classList.add("hidden");
+  $("#appScreen").classList.remove("hidden");
+  $("#statusDot").classList.add("ok");
+  $("#topSummary").textContent = `${state.card.name || "Agent"} at ${state.agentUrl}`;
+  $("#agentName").textContent = `${state.card.name || "Agent"} v${state.card.version || "?"}`;
+  connectPushFeed();
+}
+
+function disconnect() {
+  if (state.pushStream) {
+    state.pushStream.close();
+    state.pushStream = null;
+  }
+  state.connected = false;
+  state.agentUrl = "";
+  state.token = "";
+  state.card = null;
+  state.extendedCard = null;
+  $("#statusDot").classList.remove("ok");
+  $("#topSummary").textContent = "Connect to an A2A agent to begin.";
+  $("#appScreen").classList.add("hidden");
+  $("#connectScreen").classList.remove("hidden");
+}
+
+async function connect() {
+  clearError();
+  const agentUrl = $("#agentUrl").value.trim().replace(/\/$/, "");
+  const token = $("#token").value.trim();
+  if (!agentUrl) {
+    showError("Enter an A2A JSON-RPC URL before connecting.");
+    return;
+  }
+
+  $("#connectBtn").disabled = true;
+  $("#connectBtn").textContent = "Connecting";
+  try {
+    const response = await fetch("/api/agent-card?agentUrl=" + encodeURIComponent(agentUrl));
+    const card = await response.json();
+    if (!response.ok || card.error) throw new Error(card.error || `Could not fetch public card from ${agentUrl}.`);
+
+    state.agentUrl = agentUrl;
+    state.token = token;
+    state.card = card;
+    state.extendedCard = null;
+
+    if (token) {
+      const extended = await relayRpc("GetExtendedAgentCard", {});
+      if (!extended || !extended.result || !looksLikeExtendedCard(card, extended.result)) {
+        throw new Error(normalizeRpcError(extended, "Token validation failed. The agent did not return a real extended card for this token."));
+      }
+      state.extendedCard = extended.result;
+    }
+
+    state.connected = true;
+    $("#publicCardView").textContent = pretty(card);
+    $("#publicCardStatus").textContent = "loaded";
+    $("#publicCardStatus").className = "inline-status ok";
+    if (state.extendedCard) {
+      $("#extendedCardView").textContent = pretty(state.extendedCard);
+      $("#extendedCardStatus").textContent = "loaded";
+      $("#extendedCardStatus").className = "inline-status ok";
+    } else {
+      $("#extendedCardView").textContent = "No token provided. Public-card mode is connected.";
+      $("#extendedCardStatus").textContent = "not requested";
+      $("#extendedCardStatus").className = "inline-status";
+    }
+    updateCaps(card);
+    showApp();
+  } catch (error) {
+    state.connected = false;
+    showError(error.message || String(error));
+  } finally {
+    $("#connectBtn").disabled = false;
+    $("#connectBtn").textContent = "Connect";
+  }
+}
+
+function messageParams(text, configuration) {
+  const parts = [{ text }];
+  if (state.attachedFile) {
+    parts.push({ raw: state.attachedFile.base64, mediaType: state.attachedFile.mediaType, filename: state.attachedFile.name });
+  }
+  const params = { message: { messageId: id(), role: "ROLE_USER", parts } };
+  if (configuration) params.configuration = configuration;
+  return params;
+}
+
+function pushConfig() {
+  if (!$("#autoPush").checked || $("#autoPush").disabled) return null;
+  return { taskPushNotificationConfig: { id: "dashboard-" + id(), url: $("#webhookUrl").value, token: "dashboard-relay" } };
+}
+
+function clearAttachment() {
+  state.attachedFile = null;
+  $("#fileInput").value = "";
+  $("#fileName").textContent = $("#fileInput").disabled ? "File upload disabled until multimodal input is advertised." : "No file selected.";
+}
+
+async function send() {
+  const text = $("#message").value.trim();
+  if (!text) return;
+  $("#sendBtn").disabled = true;
+  addMessage("user", text);
+  const config = pushConfig();
+  let finalText = "";
+  const onEvent = (ev) => {
+    const info = classify(ev);
+    logEvent(info.type, info.text, ev);
+    if (info.taskId) updateTask(info.taskId, info.contextId);
+    if (info.artifactText) finalText = info.artifactText;
+  };
+
+  try {
+    if (state.stream) {
+      await relayRpc("SendStreamingMessage", messageParams(text, config), { streaming: true, onEvent });
+    } else {
+      const response = await relayRpc("SendMessage", messageParams(text, config));
+      onEvent(response);
+      finalText = extractArtifactText(response);
+      const task = (response.result && (response.result.task || response.result)) || {};
+      if (task.id) updateTask(task.id, task.contextId || task.context_id);
+    }
+    addMessage("agent", finalText || "The agent completed without a text artifact. Check the event log for raw payload details.");
+    $("#message").value = "";
+    clearAttachment();
+  } catch (error) {
+    logEvent("error", error.message, { error: error.message });
+    addMessage("agent", "Error: " + error.message);
+  } finally {
+    $("#sendBtn").disabled = false;
+  }
+}
+
+async function loadWebhook() {
+  const response = await fetch("/api/webhook-url");
+  const data = await response.json();
+  $("#webhookUrl").value = data.url;
+  $("#webhookText").textContent = data.url;
+}
+
+function connectPushFeed() {
+  if (state.pushStream) return;
+  state.pushStream = new EventSource("/events");
+  state.pushStream.onmessage = (message) => {
+    try {
+      const event = JSON.parse(message.data);
+      addEvent($("#pushList"), "push", "Delivery received", event);
+      addEvent($("#eventList"), "push", "Push delivery received", event);
+    } catch (_) {}
+  };
+  state.pushStream.onerror = () => {
+    logEvent("error", "Push event stream disconnected.", {});
+  };
+}
+
+async function getTask() {
+  const taskId = $("#taskId").value.trim();
+  if (!taskId) return;
+  const response = await relayRpc("GetTask", { id: taskId, history_length: 10 });
+  $("#taskOutput").innerHTML = `<pre>${escapeHtml(pretty(response.result || response))}</pre>`;
+}
+
+async function listTasks() {
+  const contextId = $("#contextId").value.trim();
+  const params = contextId ? { context_id: contextId, page_size: 20 } : { page_size: 20 };
+  const response = await relayRpc("ListTasks", params);
+  if (response.error) {
+    $("#taskOutput").innerHTML = `<pre>${escapeHtml(pretty(response.error))}</pre>`;
+    return;
+  }
+  const tasks = (response.result && response.result.tasks) || [];
+  if (!tasks.length) {
+    $("#taskOutput").innerHTML = "<pre>No tasks found.</pre>";
+    return;
+  }
+  const rows = tasks.map((task) => {
+    const stateName = (task.status && task.status.state) || "";
+    const context = task.contextId || task.context_id || "";
+    return `<tr><td class="mono">${escapeHtml(task.id)}</td><td>${escapeHtml(stateName)}</td><td class="mono">${escapeHtml(context)}</td></tr>`;
+  }).join("");
+  $("#taskOutput").innerHTML = `<table><thead><tr><th>ID</th><th>State</th><th>Context</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+async function subscribeTask() {
+  const taskId = $("#taskId").value.trim();
+  if (!taskId) return;
+  state.subscribeController = new AbortController();
+  $("#subscribeBtn").disabled = true;
+  $("#stopSubscribeBtn").disabled = false;
+  try {
+    await relayRpc("SubscribeToTask", { id: taskId }, {
+      streaming: true,
+      signal: state.subscribeController.signal,
+      onEvent: (ev) => {
+        const info = classify(ev);
+        logEvent(info.type, "Subscribe: " + info.text, ev);
+      }
+    });
+  } catch (error) {
+    if (error.name !== "AbortError") logEvent("error", error.message, { error: error.message });
+  } finally {
+    $("#subscribeBtn").disabled = false;
+    $("#stopSubscribeBtn").disabled = true;
+    state.subscribeController = null;
+  }
+}
+
+async function cancelTask() {
+  const taskId = $("#taskId").value.trim();
+  if (!taskId) return;
+  const response = await relayRpc("CancelTask", { id: taskId });
+  $("#taskOutput").innerHTML = `<pre>${escapeHtml(pretty(response))}</pre>`;
+}
+
+$$(".nav-btn").forEach((button) => {
+  button.addEventListener("click", () => {
+    $$(".nav-btn").forEach((item) => item.classList.remove("active"));
+    $$(".view").forEach((view) => view.classList.remove("active"));
+    button.classList.add("active");
+    $("#" + button.dataset.view).classList.add("active");
+  });
+});
+
+$("#lightBtn").addEventListener("click", () => setTheme("light"));
+$("#darkBtn").addEventListener("click", () => setTheme("dark"));
+$("#connectBtn").addEventListener("click", connect);
+$("#disconnectBtn").addEventListener("click", disconnect);
+$("#refreshCardBtn").addEventListener("click", connect);
+$("#streamMode").addEventListener("click", () => {
+  state.stream = true;
+  $("#streamMode").classList.add("active");
+  $("#invokeMode").classList.remove("active");
+});
+$("#invokeMode").addEventListener("click", () => {
+  state.stream = false;
+  $("#invokeMode").classList.add("active");
+  $("#streamMode").classList.remove("active");
+});
+$("#sendBtn").addEventListener("click", send);
+$("#message").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) send();
+});
+$("#fileInput").addEventListener("change", async () => {
+  const file = $("#fileInput").files[0];
+  if (!file) return;
+  const dataUrl = await new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.readAsDataURL(file);
+  });
+  state.attachedFile = { name: file.name, mediaType: file.type || "application/octet-stream", base64: String(dataUrl).split(",")[1] || "" };
+  $("#fileName").textContent = file.name;
+});
+$("#clearFileBtn").addEventListener("click", clearAttachment);
+$("#clearChatEventsBtn").addEventListener("click", () => { $("#chatEvents").innerHTML = ""; });
+$("#clearEventsBtn").addEventListener("click", () => { $("#eventList").innerHTML = ""; });
+$("#clearPushBtn").addEventListener("click", async () => {
+  $("#pushList").innerHTML = "";
+  await fetch("/api/notifications", { method: "DELETE" });
+});
+$("#getTaskBtn").addEventListener("click", getTask);
+$("#listTasksBtn").addEventListener("click", listTasks);
+$("#subscribeBtn").addEventListener("click", subscribeTask);
+$("#stopSubscribeBtn").addEventListener("click", () => {
+  if (state.subscribeController) state.subscribeController.abort();
+});
+$("#cancelTaskBtn").addEventListener("click", cancelTask);
+
+loadWebhook();
+</script>
+</body>
+</html>

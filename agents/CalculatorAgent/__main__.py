@@ -22,6 +22,7 @@ from a2a.types import (
     SecurityRequirement,
     SecurityScheme,
 )
+from a2a.utils.errors import InvalidRequestError
 from dotenv import load_dotenv
 from starlette.applications import Starlette
 
@@ -135,6 +136,14 @@ extended_agent_card = AgentCard(
 components.apply_to_card(public_agent_card)
 components.apply_to_card(extended_agent_card)
 
+
+async def _authenticated_extended_card(card: AgentCard, context) -> AgentCard:
+    """Return the extended card only when the bearer token validates."""
+    token = request_context_builder.extract_token_from_context(context)
+    if token and await validator.validate(token):
+        return card
+    raise InvalidRequestError("A valid bearer token is required for the extended agent card.")
+
 _executor: AgentExecutor = CalculatorAgentExecutor(
     multi_modal=CAPABILITIES.multi_modal,
 )
@@ -152,6 +161,7 @@ request_handler = DefaultRequestHandler(
     push_sender=components.push_sender,
     request_context_builder=request_context_builder,
     extended_agent_card=extended_agent_card,
+    extended_card_modifier=_authenticated_extended_card,
 )
 
 
