@@ -1029,7 +1029,7 @@ const state = {
   extendedCard: null,
   stream: true,
   attachedFile: null,
-  acceptedFile: [],
+  acceptedModes: [],
   pushStream: null,
   subscribeController: null
 };
@@ -1121,7 +1121,7 @@ function now() {
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (ch) => ({
-    "&": "&amp", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
   })[ch]);
 }
 
@@ -1344,7 +1344,7 @@ function summarizeEvent(ev) {
     const stateName = status.state || "STATUS";
     const text = extractTextFromParts(((status.message || {}).parts) || []);
     const complete = stateName === "TASK_STATE_COMPLETED";
-    const failed = stateName === "TASK_STATE_FAILED" || stateName === "TASK_STATE_REJECTED" || stateName === "TASK_STATE_CANCELLED";
+    const failed = stateName === "TASK_STATE_FAILED" || stateName === "TASK_STATE_REJECTED" || stateName === "TASK_STATE_CANCELED";
     const input = stateName === "TASK_STATE_INPUT_REQUIRED";
     let kind = "working";
     if (complete) kind = "complete";
@@ -1637,7 +1637,7 @@ async function copyText(text, label) {
 }
 
 function renderMarkdown(src) {
-  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt'", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const text = String(src == null ? "" : src).replace(/\r\n/g, "\n");
   const codeBlocks = [];
   const work = text.replace(/```[\w-]*\n?([\s\S]*?)```/g, (m, code) => {
