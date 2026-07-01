@@ -1029,6 +1029,7 @@ const state = {
   extendedCard: null,
   stream: true,
   attachedFile: null,
+  acceptedFile: [],
   pushStream: null,
   subscribeController: null
 };
@@ -1120,7 +1121,7 @@ function now() {
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (ch) => ({
-    "&": "&", "<": "<", ">": ">", '"': """, "'": "'"
+    "&": "&amp", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
   })[ch]);
 }
 
@@ -1440,7 +1441,9 @@ function updateTask(taskId, contextId) {
 function updateCaps(card) {
   const caps = card.capabilities || {};
   const inputModes = card.defaultInputModes || card.default_input_modes || [];
-  const hasFile = inputModes.some((mode) => mode.startsWith("image/") || mode === "application/json");
+  const fileModes = inputModes.filter((mode) => mode && mode !== "text" && mode !== "text/plain");
+  const hasFile = fileModes.length > 0;
+  state.acceptedModes = fileModes;
   const values = {
     streaming: !!caps.streaming,
     push: !!caps.pushNotifications,
@@ -1454,8 +1457,10 @@ function updateCaps(card) {
     cap.querySelector(".pill").textContent = on ? "on" : "off";
   });
   $("#fileInput").disabled = !hasFile;
+  $("#fileInput").accept = fileModes.join(",");
+  $("#fileInput").title = hasFile ? "Accepted" + fileModes.join(", ") : "";
   $("#clearFileBtn").disabled = !hasFile;
-  $("#fileName").textContent = hasFile ? "No file selected." : "File upload disabled until multimodal input is advertised.";
+  $("#fileName").textContent = hasFile ? "Accepted: " + fileModes.join(", ") : "File upload disabled until multimodal input is advertised.";
   $("#autoPush").disabled = !values.push;
   $("#autoPush").checked = values.push;
 }
@@ -1557,10 +1562,29 @@ function pushConfig() {
   return { taskPushNotificationConfig: { id: "dashboard-" + id(), url: $("#webhookUrl").value, token: "dashboard-relay" } };
 }
 
+function isAcceptedFile(file) {
+  const modes = state.acceptedModes || [];
+  if (!modes.length) return false;
+  const mime = (file.type || "").toLowerCase();
+  if (!mime) return false;
+  return modes.some((mode) => {
+    const m = mode.toLowerCase();
+    if (m === mime) return true;
+    if (m.endsWith("/*")) return mime.startsWith(m.slice(0, -1));
+    return false;
+  });
+}
+
 function clearAttachment() {
   state.attachedFile = null;
   $("#fileInput").value = "";
-  $("#fileName").textContent = $("#fileInput").disabled ? "File upload disabled until multimodal input is advertised." : "No file selected.";
+  if ($("#fileInput").disabled){
+    $("#fileName").textContent = "File upload disabled until multimodal input is advertised.";
+  } else if ((state.acceptedModes || []).length) {
+    $("#fileName").textContent = "Accepted: " + state.acceptedModes.join(", ");
+  } else {
+    $("#fileName").textContent = "No file selected."
+  }
 }
 
 function autoGrowMessage() {
@@ -1613,7 +1637,7 @@ async function copyText(text, label) {
 }
 
 function renderMarkdown(src) {
-  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&", "<": "<", ">": ">", '"': """, "'": "'" }[c]));
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt'", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const text = String(src == null ? "" : src).replace(/\r\n/g, "\n");
   const codeBlocks = [];
   const work = text.replace(/```[\w-]*\n?([\s\S]*?)```/g, (m, code) => {
@@ -1997,6 +2021,12 @@ document.addEventListener("click", (event) => {
 $("#fileInput").addEventListener("change", async () => {
   const file = $("#fileInput").files[0];
   if (!file) return;
+  if (!isAcceptedFile(file)) {
+    const allowed = (state.acceptedModes || []).join(", ") || "none";
+    toast(`"${file.type || "unknown type"}" is not accepted. Allowed: ${allowed}`, "error");
+    clearAttachment();
+    return;
+  }
   const dataUrl = await new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
