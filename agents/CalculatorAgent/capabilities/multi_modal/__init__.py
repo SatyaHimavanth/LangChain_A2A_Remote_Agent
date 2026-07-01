@@ -6,10 +6,12 @@ from .part_extractor import (
     MULTIMODAL_INPUT_TYPES,
     TEXT_OUTPUT_TYPES,
     extract_langchain_content,
+    validate_message_content_types,
 )
 
 __all__ = [
     "MULTIMODAL_INPUT_TYPES",
     "TEXT_OUTPUT_TYPES",
     "extract_langchain_content",
+    "validate_message_content_types",
 ]

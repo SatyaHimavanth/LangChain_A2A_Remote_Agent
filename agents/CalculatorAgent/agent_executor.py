@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 from a2a.helpers import (
     new_task_from_user_message,
     new_text_artifact_update_event,
@@ -20,9 +22,21 @@ class CalculatorAgentExecutor(AgentExecutor):
     """Calculator Agent Executor."""
 
     def __init__(self, multi_modal: bool = False):
-        self.basic_agent = CalculatorAgent()
-        self.advanced_agent = CalculatorAgent(enable_advanced_tools=True)
+        self.agent = CalculatorAgent()
         self._multi_modal = multi_modal
+        self._input_modes = (
+            [
+                "text",
+                "text/plain",
+                "image/jpeg",
+                "image/png",
+                "image/gif",
+                "image/webp",
+                "application/json",
+            ]
+            if multi_modal
+            else ["text", "text/plain"]
+        )
 
     async def execute(
         self,
@@ -35,12 +49,17 @@ class CalculatorAgentExecutor(AgentExecutor):
         if self._is_empty_request(context):
             raise InvalidParamsError(message="Empty user input.")
 
+        if context.message:
+            from .capabilities.multi_modal import validate_message_content_types
+
+            validate_message_content_types(context.message, self._input_modes)
+
         query = context.get_user_input().strip()
-        agent = self._resolve_agent_for_request(context)
+        is_authenticated = self._is_request_authenticated(context)
         logger.info(
-            "Selected '%s' calculator for context_id=%s",
-            "advanced" if agent is self.advanced_agent else "basic",
+            "Selected calculator for context_id=%s authenticated=%s",
             context.context_id,
+            is_authenticated,
         )
 
         # FIX (risk 4): task creation and initial enqueue moved inside try so any
@@ -60,9 +79,17 @@ class CalculatorAgentExecutor(AgentExecutor):
             if self._multi_modal and context.message:
                 from .capabilities.multi_modal import extract_langchain_content
                 content_blocks = extract_langchain_content(context.message)
-                stream = agent.stream_multimodal(content_blocks, task.context_id)
+                stream = self.agent.stream_multimodal(
+                    content_blocks,
+                    task.context_id,
+                    allow_protected_tools=is_authenticated,
+                )
             else:
-                stream = agent.stream(query, task.context_id)
+                stream = self.agent.stream(
+                    query,
+                    task.context_id,
+                    allow_protected_tools=is_authenticated,
+                )
 
             async for item in stream:
                 logger.info("Agent stream item: %s", item)
@@ -70,6 +97,18 @@ class CalculatorAgentExecutor(AgentExecutor):
                 require_user_input = item.get("require_user_input", False)
                 response_status = item.get("status", "")
                 content = item.get("content", "")
+
+                if response_status == "auth_required" or item.get("require_auth"):
+                    await event_queue.enqueue_event(
+                        new_text_status_update_event(
+                            task_id=task.id,
+                            context_id=task.context_id,
+                            state=TaskState.TASK_STATE_AUTH_REQUIRED,
+                            text=content,
+                        )
+                    )
+                    terminal_emitted = True
+                    break
 
                 if not is_task_complete and not require_user_input and response_status != "error":
                     await event_queue.enqueue_event(
@@ -106,16 +145,21 @@ class CalculatorAgentExecutor(AgentExecutor):
                     terminal_emitted = True
                     break
 
-                # Emit the final result as an artifact, then a clean terminal status.
-                await event_queue.enqueue_event(
-                    new_text_artifact_update_event(
-                        task_id=task.id,
-                        context_id=task.context_id,
-                        name="calculation_result",
-                        text=content,
-                        last_chunk=True,
+                artifact_id = str(uuid.uuid4())
+                chunks = _artifact_chunks(content)
+                for index, chunk in enumerate(chunks):
+                    await event_queue.enqueue_event(
+                        new_text_artifact_update_event(
+                            task_id=task.id,
+                            context_id=task.context_id,
+                            name="calculation_result",
+                            text=chunk,
+                            append=index > 0,
+                            last_chunk=index == len(chunks) - 1,
+                            artifact_id=artifact_id,
+                        )
                     )
-                )
+
                 # FIX (bug 2): use TaskStatusUpdateEvent directly so the terminal
                 # COMPLETED event carries NO message body.  new_text_status_update_event
                 # always creates a Message with text= attached; passing "" produced a
@@ -167,11 +211,6 @@ class CalculatorAgentExecutor(AgentExecutor):
         """Returns True when the request carries no usable user text."""
         return not bool(context.get_user_input().strip())
 
-    def _resolve_agent_for_request(self, context: RequestContext) -> CalculatorAgent:
-        if self._is_request_authenticated(context):
-            return self.advanced_agent
-        return self.basic_agent
-
     @staticmethod
     def _is_request_authenticated(context: RequestContext) -> bool:
         call_context = context.call_context
@@ -202,3 +241,10 @@ def _make_text_message(text: str, context: RequestContext):
         context_id=context.context_id or "",
         task_id=context.task_id or "",
     )
+
+
+def _artifact_chunks(text: str, size: int = 256) -> list[str]:
+    """Split longer artifact text into A2A append chunks."""
+    if not text:
+        return [""]
+    return [text[index : index + size] for index in range(0, len(text), size)]

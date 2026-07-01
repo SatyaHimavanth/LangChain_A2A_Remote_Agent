@@ -987,6 +987,16 @@
         </div>
         <div class="section-body" style="display:grid; gap:12px">
           <div class="field"><label for="webhookUrl">Dashboard webhook</label><div class="field-row"><input id="webhookUrl" class="input mono" readonly /><button class="icon-btn" type="button" data-copy="webhookUrl" data-copy-attr="value" data-copy-label="Webhook URL">Copy</button></div></div>
+          <div class="grid-2" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr)">
+            <div class="field"><label for="pushTaskId">Push task ID</label><input id="pushTaskId" class="input mono" placeholder="Uses current Task ID if empty" /></div>
+            <div class="field"><label for="pushConfigId">Config ID</label><input id="pushConfigId" class="input mono" placeholder="dashboard-* or custom id" /></div>
+          </div>
+          <div class="toolbar">
+            <button id="getPushConfigBtn" class="btn secondary small" type="button">Get config</button>
+            <button id="listPushConfigBtn" class="btn secondary small" type="button">List configs</button>
+            <button id="deletePushConfigBtn" class="btn danger small" type="button">Delete config</button>
+          </div>
+          <div id="pushConfigOutput" data-empty="Push config results appear here after you register one from Chat."></div>
           <div id="pushList" class="event-list" data-empty="No push deliveries yet. Enable Auto push in Chat and send a message."></div>
         </div>
       </section>
@@ -1345,7 +1355,7 @@ function summarizeEvent(ev) {
     const text = extractTextFromParts(((status.message || {}).parts) || []);
     const complete = stateName === "TASK_STATE_COMPLETED";
     const failed = stateName === "TASK_STATE_FAILED" || stateName === "TASK_STATE_REJECTED" || stateName === "TASK_STATE_CANCELED";
-    const input = stateName === "TASK_STATE_INPUT_REQUIRED";
+    const input = stateName === "TASK_STATE_INPUT_REQUIRED" || stateName === "TASK_STATE_AUTH_REQUIRED";
     let kind = "working";
     if (complete) kind = "complete";
     else if (failed) kind = "error";
@@ -1435,6 +1445,7 @@ function startTurn() {
 
 function updateTask(taskId, contextId) {
   if (taskId) $("#taskId").value = taskId;
+  if (taskId) $("#pushTaskId").value = taskId;
   if (contextId) $("#contextId").value = contextId;
 }
 
@@ -1559,7 +1570,9 @@ function messageParams(text, configuration) {
 
 function pushConfig() {
   if (!$("#autoPush").checked || $("#autoPush").disabled) return null;
-  return { taskPushNotificationConfig: { id: "dashboard-" + id(), url: $("#webhookUrl").value, token: "dashboard-relay" } };
+  const configId = "dashboard-" + id();
+  $("#pushConfigId").value = configId;
+  return { taskPushNotificationConfig: { id: configId, url: $("#webhookUrl").value, token: "dashboard-relay" } };
 }
 
 function isAcceptedFile(file) {
@@ -1956,6 +1969,40 @@ async function cancelTask() {
   toast("Cancel requested", "ok");
 }
 
+function pushTaskId() {
+  return $("#pushTaskId").value.trim() || $("#taskId").value.trim();
+}
+
+function renderPushConfigResponse(label, response) {
+  $("#pushConfigOutput").innerHTML = `<details class="raw-json" open><summary>${escapeHtml(label)}</summary><pre>${escapeHtml(pretty(response))}</pre></details>`;
+}
+
+async function getPushConfig() {
+  const taskId = pushTaskId();
+  const configId = $("#pushConfigId").value.trim();
+  if (!taskId || !configId) { toast("Enter a task ID and config ID", "error"); return; }
+  const response = await relayRpc("GetTaskPushNotificationConfig", { task_id: taskId, id: configId });
+  renderPushConfigResponse("Get push config", response);
+  toast(response.error ? "Get config failed" : "Push config loaded", response.error ? "error" : "ok");
+}
+
+async function listPushConfigs() {
+  const taskId = pushTaskId();
+  if (!taskId) { toast("Enter a task ID first", "error"); return; }
+  const response = await relayRpc("ListTaskPushNotificationConfigs", { task_id: taskId, page_size: 20 });
+  renderPushConfigResponse("List push configs", response);
+  toast(response.error ? "List configs failed" : "Push configs listed", response.error ? "error" : "ok");
+}
+
+async function deletePushConfig() {
+  const taskId = pushTaskId();
+  const configId = $("#pushConfigId").value.trim();
+  if (!taskId || !configId) { toast("Enter a task ID and config ID", "error"); return; }
+  const response = await relayRpc("DeleteTaskPushNotificationConfig", { task_id: taskId, id: configId });
+  renderPushConfigResponse("Delete push config", response);
+  toast(response.error ? "Delete config failed" : "Push config deleted", response.error ? "error" : "ok");
+}
+
 $$(".nav-btn").forEach((button) => {
   button.addEventListener("click", () => {
     $$(".nav-btn").forEach((item) => item.classList.remove("active"));
@@ -2053,6 +2100,9 @@ $("#stopSubscribeBtn").addEventListener("click", () => {
   if (state.subscribeController) state.subscribeController.abort();
 });
 $("#cancelTaskBtn").addEventListener("click", cancelTask);
+$("#getPushConfigBtn").addEventListener("click", getPushConfig);
+$("#listPushConfigBtn").addEventListener("click", listPushConfigs);
+$("#deletePushConfigBtn").addEventListener("click", deletePushConfig);
 
 updateNotifyButton();
 loadWebhook();

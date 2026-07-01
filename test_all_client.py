@@ -33,8 +33,10 @@ ALL_TESTS = [
     "chat",
     "stream",
     "extended",
+    "auth",
     "tasks",
     "multimodal",
+    "content-type",
     "push",
 ]
 TERMINAL_STATES = {
@@ -42,6 +44,7 @@ TERMINAL_STATES = {
     "TASK_STATE_FAILED",
     "TASK_STATE_CANCELED",
     "TASK_STATE_REJECTED",
+    "TASK_STATE_AUTH_REQUIRED",
 }
 
 
@@ -314,6 +317,14 @@ class A2ACapabilityClient:
         ok = any("Advanced" in (name or "") for name in skills)
         return TestResult("Extended card", ok, f"skills={skills}", _elapsed_ms(started), data)
 
+    async def check_auth_required(self, client: httpx.AsyncClient) -> TestResult:
+        started = time.perf_counter()
+        data = await _post_rpc(client, self.url, "SendMessage", _message_params("What is sqrt(16)?"), None)
+        task = _task_from_result(data)
+        state = (task or {}).get("status", {}).get("state")
+        ok = state == "TASK_STATE_AUTH_REQUIRED"
+        return TestResult("Auth required state", ok, f"state={state}", _elapsed_ms(started), data)
+
     async def check_tasks(self, client: httpx.AsyncClient, message: str) -> TestResult:
         started = time.perf_counter()
         data = await _post_rpc(
@@ -393,6 +404,30 @@ class A2ACapabilityClient:
         ok = bool(task) and state == "TASK_STATE_COMPLETED" and bool(text)
         return TestResult("Multimodal", ok, f"state={state}; artifact={text!r}", _elapsed_ms(started), data)
 
+    async def check_content_type_validation(self, client: httpx.AsyncClient) -> TestResult:
+        started = time.perf_counter()
+        data = await _post_rpc(
+            client,
+            self.url,
+            "SendMessage",
+            _message_params(
+                "",
+                parts=[
+                    {"text": "Please process this unsupported file."},
+                    {
+                        "raw": "UklGRiQAAABXQVZFZm10IBAAAAABAAEA",
+                        "mediaType": "audio/wav",
+                        "filename": "tone.wav",
+                    },
+                ],
+            ),
+            self.token,
+        )
+        error = data.get("error") or {}
+        code = error.get("code")
+        ok = code == -32005
+        return TestResult("Content-type validation", ok, f"error_code={code}", _elapsed_ms(started), data)
+
     async def check_push(
         self,
         message: str,
@@ -430,6 +465,10 @@ class A2ACapabilityClient:
                 )
                 if "error" in data:
                     return TestResult("Push notifications", False, json.dumps(data["error"]), _elapsed_ms(started), data)
+                task = _task_from_result(data)
+                task_id = (task or {}).get("id")
+                if not task_id:
+                    return TestResult("Push notifications", False, "no task id returned", _elapsed_ms(started), data)
 
                 try:
                     await asyncio.wait_for(capture.event.wait(), timeout=self.timeout)
@@ -437,8 +476,44 @@ class A2ACapabilityClient:
                     return TestResult("Push notifications", False, "no webhook delivery received", _elapsed_ms(started), data)
 
                 token_ok = any(item.get("token") == "cli-capability-token" for item in capture.notifications)
-                detail = f"received={len(capture.notifications)}; token_ok={token_ok}"
-                return TestResult("Push notifications", token_ok, detail, _elapsed_ms(started), capture.notifications)
+                get_config = await _post_rpc(
+                    client,
+                    self.url,
+                    "GetTaskPushNotificationConfig",
+                    {"task_id": task_id, "id": "cli-capability-test"},
+                    self.token,
+                )
+                list_configs = await _post_rpc(
+                    client,
+                    self.url,
+                    "ListTaskPushNotificationConfigs",
+                    {"task_id": task_id, "page_size": 10},
+                    self.token,
+                )
+                delete_config = await _post_rpc(
+                    client,
+                    self.url,
+                    "DeleteTaskPushNotificationConfig",
+                    {"task_id": task_id, "id": "cli-capability-test"},
+                    self.token,
+                )
+                config_ok = (
+                    not get_config.get("error")
+                    and not list_configs.get("error")
+                    and not delete_config.get("error")
+                    and bool((list_configs.get("result") or {}).get("configs"))
+                )
+                detail = (
+                    f"received={len(capture.notifications)}; token_ok={token_ok}; "
+                    f"config_management={config_ok}"
+                )
+                raw = {
+                    "notifications": capture.notifications,
+                    "get": get_config,
+                    "list": list_configs,
+                    "delete": delete_config,
+                }
+                return TestResult("Push notifications", token_ok and config_ok, detail, _elapsed_ms(started), raw)
         finally:
             server.should_exit = True
             await server_task
@@ -465,10 +540,14 @@ async def _run_selected(args: argparse.Namespace, tests: list[str]) -> int:
                     results.append(await runner.check_stream(client, args.message, args.expect_opaque))
                 elif name == "extended":
                     results.append(await runner.check_extended_card(client))
+                elif name == "auth":
+                    results.append(await runner.check_auth_required(client))
                 elif name == "tasks":
                     results.append(await runner.check_tasks(client, args.message))
                 elif name == "multimodal":
                     results.append(await runner.check_multimodal(client))
+                elif name == "content-type":
+                    results.append(await runner.check_content_type_validation(client))
                 elif name == "push":
                     results.append(await runner.check_push(args.message, args.webhook_host, args.webhook_port))
 

@@ -48,11 +48,12 @@ class CalculatorAgent:
 
     SUPPORTED_CONTENT_TYPES = ["text", "text/plain"]
 
-    def __init__(self, enable_advanced_tools: bool = False):
+    def __init__(self):
         self.model = llm
-        self.tools = [addition, subtraction, multiplication, division]
-        if enable_advanced_tools:
-            self.tools.extend([power, root])
+        basic_tools = [addition, subtraction, multiplication, division]
+        protected_tools = [power, root]
+        self.protected_tool_names = frozenset(tool.name for tool in protected_tools)
+        self.tools = [*basic_tools, *protected_tools]
 
         # MemorySaver keeps conversation/tool state isolated by A2A context_id.
         self._memory = MemorySaver()
@@ -60,11 +61,7 @@ class CalculatorAgent:
             self.model,
             tools=self.tools,
             checkpointer=self._memory,
-            system_prompt=(
-                self.ADVANCED_SYSTEM_INSTRUCTION
-                if enable_advanced_tools
-                else self.SYSTEM_INSTRUCTION
-            ),
+            system_prompt=self.ADVANCED_SYSTEM_INSTRUCTION,
             response_format=ToolStrategy(ResponseFormat),
         )
 
@@ -72,26 +69,29 @@ class CalculatorAgent:
         self,
         query: str,
         context_id: str,
+        allow_protected_tools: bool = True,
     ) -> AsyncIterable[dict[str, Any]]:
         """Stream progress dictionaries for a plain-text calculator request."""
         inputs = {"messages": [("user", query)]}
-        async for item in self._stream_graph(inputs, context_id):
+        async for item in self._stream_graph(inputs, context_id, allow_protected_tools):
             yield item
 
     async def stream_multimodal(
         self,
         content: list[dict],
         context_id: str,
+        allow_protected_tools: bool = True,
     ) -> AsyncIterable[dict[str, Any]]:
         """Stream progress for modality-agnostic LangChain content blocks."""
         inputs = {"messages": [HumanMessage(content=content)]}
-        async for item in self._stream_graph(inputs, context_id):
+        async for item in self._stream_graph(inputs, context_id, allow_protected_tools):
             yield item
 
     async def _stream_graph(
         self,
         inputs: dict[str, Any],
         context_id: str,
+        allow_protected_tools: bool,
     ) -> AsyncIterable[dict[str, Any]]:
         """Run the LangGraph agent and normalize each update for the A2A layer."""
         config = {"configurable": {"thread_id": context_id}}
@@ -103,12 +103,13 @@ class CalculatorAgent:
             stream_mode="updates",
         ):
             logger.info("Agent response chunk: %s", chunk)
-            async for item in self._process_chunk(chunk):
+            async for item in self._process_chunk(chunk, allow_protected_tools):
                 yield item
 
     async def _process_chunk(
         self,
         chunk: dict,
+        allow_protected_tools: bool,
     ) -> AsyncIterable[dict[str, Any]]:
         """Convert LangGraph updates into status dictionaries for AgentExecutor."""
         for _, data in chunk.items():
@@ -124,6 +125,25 @@ class CalculatorAgent:
             message = messages[-1]
             if isinstance(message, AIMessage):
                 if message.tool_calls:
+                    protected_calls = [
+                        tool_call.get("name", "unknown")
+                        for tool_call in message.tool_calls
+                        if tool_call.get("name") in self.protected_tool_names
+                    ]
+                    if protected_calls and not allow_protected_tools:
+                        names = ", ".join(sorted(set(protected_calls)))
+                        yield {
+                            "status": "auth_required",
+                            "is_task_complete": False,
+                            "require_user_input": False,
+                            "require_auth": True,
+                            "content": (
+                                "Authentication is required to use protected "
+                                f"calculator tool(s): {names}."
+                            ),
+                        }
+                        return
+
                     for tool_call in message.tool_calls:
                         tool_name = tool_call.get("name", "unknown")
                         tool_args = str(tool_call.get("args", {}))

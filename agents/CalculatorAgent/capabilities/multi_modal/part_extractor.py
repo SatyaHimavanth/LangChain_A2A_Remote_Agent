@@ -7,6 +7,7 @@ import json
 import logging
 from typing import Any
 
+from a2a.utils.errors import ContentTypeNotSupportedError
 from a2a.types.a2a_pb2 import Message, Part
 from google.protobuf import json_format
 
@@ -24,6 +25,24 @@ MULTIMODAL_INPUT_TYPES: list[str] = [
     "application/json",
 ]
 TEXT_OUTPUT_TYPES: list[str] = ["text", "text/plain"]
+
+
+def validate_message_content_types(
+    message: Message,
+    allowed_types: list[str] | tuple[str, ...],
+) -> None:
+    """Raise a protocol error when a message part uses an undeclared MIME type."""
+    allowed = set(allowed_types)
+    for part in message.parts:
+        variant = part.WhichOneof("content")
+        mime = part.media_type or _default_mime_for_variant(variant)
+        if variant == "raw" and _is_image_mime(mime):
+            mime = _canonical_image_mime(mime)
+        if mime not in allowed:
+            raise ContentTypeNotSupportedError(
+                f"Input content type {mime!r} is not supported. "
+                f"Supported input types: {', '.join(sorted(allowed))}."
+            )
 
 
 def extract_langchain_content(message: Message) -> list[dict[str, Any]]:
@@ -95,3 +114,18 @@ def _convert_data(part: Part) -> dict[str, str]:
 
 def _is_image_mime(mime: str) -> bool:
     return any(mime.startswith(prefix) for prefix in _IMAGE_MIME_PREFIXES)
+
+
+def _default_mime_for_variant(variant: str | None) -> str:
+    if variant == "text":
+        return "text/plain"
+    if variant == "data":
+        return "application/json"
+    return "application/octet-stream"
+
+
+def _canonical_image_mime(mime: str) -> str:
+    for prefix in _IMAGE_MIME_PREFIXES:
+        if mime.startswith(prefix):
+            return prefix
+    return mime
